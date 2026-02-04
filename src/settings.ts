@@ -3,11 +3,13 @@ import MyPlugin from "./main";
 
 export interface MyPluginSettings {
 	mySetting: string;
+	apiKey: string;
 }
 
 export const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+	mySetting: "default",
+	apiKey: "",
+};
 
 export class SampleSettingTab extends PluginSettingTab {
 	plugin: MyPlugin;
