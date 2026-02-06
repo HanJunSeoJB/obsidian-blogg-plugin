@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-blog-assistant-plugin",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Obsidian plugin to process meta actions and generate Gemini-based text and images for blog drafting.",
 	"main": "main.js",
 	"type": "module",
