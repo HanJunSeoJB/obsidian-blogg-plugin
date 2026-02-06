@@ -1,11 +1,10 @@
 {
 	"id": "obsidian-blogMaking-plugin",
-	"name": "Blog User Plugin",
+	"name": "Obsidian Blog Assistant",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"description": "Parses meta actions in notes and generates styled Korean text or AI images with Gemini.",
+	"author": "hanjunseo",
+	"authorUrl": "https://github.com/HanJunSeoJB",
 	"isDesktopOnly": false
 }

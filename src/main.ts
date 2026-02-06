@@ -1,6 +1,5 @@
 import {
 	App,
-	Editor,
 	MarkdownView,
 	Modal,
 	Notice,
@@ -12,11 +11,9 @@ import {
 } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
+	BlogAssistantSettingTab,
 	MyPluginSettings,
-	SampleSettingTab,
 } from "./settings";
-
-// Remember to rename these classes and interfaces!
 
 type MetaAction = {
 	actionType: string;
@@ -36,6 +33,9 @@ type GeminiResponse = {
 	}>;
 };
 
+const ENV_FILE_PATH = ".env";
+const GEMINI_API_KEY_ENV = "GEMINI_API_KEY";
+
 function parseMetaActions(content: string): MetaAction[] {
 	const actions: MetaAction[] = [];
 	const matches = content.matchAll(/@\(([^)]+)\)\[([^\]]+)\]/g);
@@ -49,39 +49,6 @@ function parseMetaActions(content: string): MetaAction[] {
 	}
 
 	return actions;
-}
-
-function noticeHelloIfMeta(content: string) {
-	const actions = parseMetaActions(content);
-	if (actions.length > 0) {
-		new Notice("인식이요");
-	}
-}
-
-async function callGeminiGreeting(
-	apiKey: string,
-	model = "gemini-2.5-flash",
-): Promise<string> {
-	const res = await requestUrlWithLogging("greeting", {
-		url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"x-goog-api-key": apiKey,
-		},
-		body: JSON.stringify({
-			contents: [
-				{
-					role: "user",
-					parts: [{ text: "한국어로 짧게 인사해줘." }],
-				},
-			],
-		}),
-	});
-
-	const data = res.json as GeminiResponse;
-	const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-	return text && text.length > 0 ? text : "안녕하세요!";
 }
 
 async function callGeminiImageSearch(
@@ -202,33 +169,26 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 	return bytes.buffer;
 }
 
-async function greetWithGemini(plugin: MyPlugin) {
-	const apiKey = plugin.settings.apiKey?.trim();
-	if (!apiKey) {
-		new ApiKeyModal(plugin.app, plugin).open();
-		return;
-	}
-
-	try {
-		const greeting = await callGeminiGreeting(apiKey);
-		new Notice(greeting);
-	} catch (error) {
-		console.error(error);
-		new Notice("Gemini 호출에 실패했어요.");
-	}
-}
-
 async function callGeminiForAction(
 	apiKey: string,
 	action: MetaAction,
+	toneContext: string,
+	writingProfile: string,
 	model = "gemini-2.5-flash",
 ): Promise<string> {
+	const toneProfile = inferToneProfile(toneContext);
 	const prompt = [
 		"너는 대학 수준으로 설명하는 튜터다.",
 		"규칙:",
 		"- 고유명사(영문/한글 포함)는 절대 수정하지 마라.",
 		"- 그 외 모든 문장은 한국어로 작성하라.",
 		"- 주제에서 벗어나지 마라.",
+		"- 스타일 참조 문맥의 어투를 강하게 따라라.",
+		"- 특히 종결어미(예: ~요, ~다)와 문장 호흡(짧음/김)을 최대한 맞춰라.",
+		"",
+		`스타일 참조 문맥:\n${toneContext || "(없음)"}`,
+		`스타일 프로필: ${toneProfile}`,
+		`기본 글 어투 프로필: ${writingProfile || "(없음)"}`,
 		"",
 		`Action type: ${action.actionType}`,
 		`Instruction: ${action.instruction}`,
@@ -259,8 +219,21 @@ async function callGeminiForAction(
 	return text && text.length > 0 ? text : "";
 }
 
+function inferToneProfile(toneContext: string): string {
+	if (!toneContext) return "참조 문맥 부족";
+	const endsWithYo = (toneContext.match(/요[.!?。！？]?/g) ?? []).length;
+	const endsFormal = (toneContext.match(/(습니다|니다)[.!?。！？]?/g) ?? [])
+		.length;
+	const endsPlain = (toneContext.match(/다[.!?。！？]?/g) ?? []).length;
+
+	if (endsWithYo > endsPlain) return "존댓말(~요) 중심";
+	if (endsFormal > 0) return "격식 존댓말(~습니다/~니다) 중심";
+	if (endsPlain > 0) return "평서체(~다) 중심";
+	return "참조 문맥 어투 최대한 모사";
+}
+
 function logGeminiError(
-	label: "greeting" | "image" | "action",
+	label: "image" | "action",
 	res: {
 		status: number;
 		headers?: Record<string, string>;
@@ -286,7 +259,7 @@ function logGeminiError(
 }
 
 async function requestUrlWithLogging(
-	label: "greeting" | "image" | "action",
+	label: "image" | "action",
 	options: Parameters<typeof requestUrl>[0],
 ) {
 	try {
@@ -324,6 +297,23 @@ async function requestUrlWithLogging(
 	}
 }
 
+function extractToneContext(contentBeforeAction: string): string {
+	const trimmed = contentBeforeAction.trim();
+	if (!trimmed) return "";
+
+	// Keep recent text only and extract the last 2 sentence-like chunks.
+	const recent = trimmed.slice(-1500).trim();
+	if (!recent) return "";
+
+	const parts = recent
+		.split(/(?<=[.!?。！？])\s+|\n+/u)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+
+	if (parts.length === 0) return "";
+	return parts.slice(-2).join(" ");
+}
+
 async function processMetaActionsInNote(
 	plugin: MyPlugin,
 	file: TFile,
@@ -349,7 +339,16 @@ async function processMetaActionsInNote(
 			const md = `![${action.instruction}](${imageUrl})`;
 			updated = updated.replace(action.raw, md);
 		} else {
-			const result = await callGeminiForAction(apiKey, action);
+			const markerIndex = updated.indexOf(action.raw);
+			const before =
+				markerIndex >= 0 ? updated.slice(0, markerIndex) : updated;
+			const toneContext = extractToneContext(before);
+			const result = await callGeminiForAction(
+				apiKey,
+				action,
+				toneContext,
+				plugin.settings.writingProfile,
+			);
 			updated = updated.replace(action.raw, result);
 		}
 	}
@@ -361,59 +360,15 @@ async function processMetaActionsInNote(
 
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
-	private isProcessingMeta = false;
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon("dice", "Sample", (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice("Hello world!");
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText("Status bar text");
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: "open-modal-simple",
-			name: "Open modal (simple)",
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
-		});
-		// Command to input and store API key
 		this.addCommand({
 			id: "set-api-key",
 			name: "Set API key",
 			callback: () => {
 				new ApiKeyModal(this.app, this).open();
-			},
-		});
-		this.addCommand({
-			id: "gemini-greet",
-			name: "Gemini greet",
-			callback: async () => {
-				await greetWithGemini(this);
-			},
-		});
-		// Check current note content for @()[] meta actions
-		this.addCommand({
-			id: "check-meta-actions",
-			name: "Check meta actions in current note",
-			checkCallback: (checking: boolean) => {
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (!markdownView) return false;
-
-				if (!checking) {
-					const content = markdownView.editor.getValue();
-					noticeHelloIfMeta(content);
-				}
-
-				return true;
 			},
 		});
 		this.addCommand({
@@ -434,82 +389,83 @@ export default class MyPlugin extends Plugin {
 				return true;
 			},
 		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: "replace-selected",
-			name: "Replace selected content",
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection("Sample editor command");
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: "open-modal-complex",
-			name: "Open modal (complex)",
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			},
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// Auto-processing disabled. Use command to trigger manually.
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, "click", (evt: MouseEvent) => {
-			new Notice("Click");
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log("setInterval"), 5 * 60 * 1000),
-		);
+		this.addSettingTab(new BlogAssistantSettingTab(this.app, this));
 	}
 
 	onunload() {}
 
 	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MyPluginSettings>,
-		);
+		const raw =
+			((await this.loadData()) as Partial<MyPluginSettings>) ?? {};
+		// Backward compatibility for old setting key.
+		if (!raw.writingProfile && (raw as Partial<{ mySetting: string }>).mySetting) {
+			raw.writingProfile = (raw as Partial<{ mySetting: string }>).mySetting;
+		}
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, raw);
+		this.settings.apiKey = await this.loadApiKeyFromEnv();
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+		await this.saveData({
+			writingProfile: this.settings.writingProfile,
+		} as Partial<MyPluginSettings>);
+		await this.saveApiKeyToEnv(this.settings.apiKey);
+	}
+
+	private async loadApiKeyFromEnv(): Promise<string> {
+		const adapter = this.app.vault.adapter;
+		if (!(await adapter.exists(ENV_FILE_PATH))) return "";
+
+		const content = await adapter.read(ENV_FILE_PATH);
+		const value = readEnvValue(content, GEMINI_API_KEY_ENV);
+		return value ?? "";
+	}
+
+	private async saveApiKeyToEnv(apiKey: string): Promise<void> {
+		const adapter = this.app.vault.adapter;
+		const current = (await adapter.exists(ENV_FILE_PATH))
+			? await adapter.read(ENV_FILE_PATH)
+			: "";
+		const updated = writeEnvValue(
+			current,
+			GEMINI_API_KEY_ENV,
+			apiKey.trim(),
+		);
+		await adapter.write(ENV_FILE_PATH, updated);
 	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
+function readEnvValue(envText: string, key: string): string | null {
+	const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const pattern = new RegExp(`^\\s*${escaped}\\s*=\\s*(.*)\\s*$`, "m");
+	const match = envText.match(pattern);
+	if (!match || match[1] == null) return null;
+
+	const raw = match[1].trim();
+	if (
+		(raw.startsWith('"') && raw.endsWith('"')) ||
+		(raw.startsWith("'") && raw.endsWith("'"))
+	) {
+		return raw.slice(1, -1);
+	}
+	return raw;
+}
+
+function writeEnvValue(envText: string, key: string, value: string): string {
+	const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const pattern = new RegExp(`^\\s*${escaped}\\s*=\\s*.*$`, "m");
+	const nextLine = `${key}=${value}`;
+
+	if (!envText || envText.trim().length === 0) {
+		return `${nextLine}\n`;
 	}
 
-	onOpen() {
-		let { contentEl } = this;
-		contentEl.setText("Woah!");
+	if (pattern.test(envText)) {
+		return envText.replace(pattern, nextLine);
 	}
 
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
+	const needsNewline = envText.endsWith("\n") ? "" : "\n";
+	return `${envText}${needsNewline}${nextLine}\n`;
 }
 
 class ApiKeyModal extends Modal {
