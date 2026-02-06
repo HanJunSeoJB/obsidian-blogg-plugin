@@ -12,7 +12,7 @@ import {
 import {
 	DEFAULT_SETTINGS,
 	BlogAssistantSettingTab,
-	MyPluginSettings,
+	BlogAssistantSettings,
 } from "./settings";
 
 type MetaAction = {
@@ -305,8 +305,7 @@ function extractToneContext(contentBeforeAction: string): string {
 	const recent = trimmed.slice(-1500).trim();
 	if (!recent) return "";
 
-	const parts = recent
-		.split(/(?<=[.!?。！？])\s+|\n+/u)
+	const parts = (recent.match(/[^.!?。！？\n]+[.!?。！？]?/gu) ?? recent.split(/\n+/))
 		.map((s) => s.trim())
 		.filter((s) => s.length > 0);
 
@@ -315,7 +314,7 @@ function extractToneContext(contentBeforeAction: string): string {
 }
 
 async function processMetaActionsInNote(
-	plugin: MyPlugin,
+	plugin: BlogAssistantPlugin,
 	file: TFile,
 ): Promise<void> {
 	const apiKey = plugin.settings.apiKey?.trim();
@@ -358,8 +357,8 @@ async function processMetaActionsInNote(
 	}
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class BlogAssistantPlugin extends Plugin {
+	settings: BlogAssistantSettings;
 
 	async onload() {
 		await this.loadSettings();
@@ -396,7 +395,7 @@ export default class MyPlugin extends Plugin {
 
 	async loadSettings() {
 		const raw =
-			((await this.loadData()) as Partial<MyPluginSettings>) ?? {};
+			((await this.loadData()) as Partial<BlogAssistantSettings>) ?? {};
 		// Backward compatibility for old setting key.
 		if (!raw.writingProfile && (raw as Partial<{ mySetting: string }>).mySetting) {
 			raw.writingProfile = (raw as Partial<{ mySetting: string }>).mySetting;
@@ -408,7 +407,7 @@ export default class MyPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData({
 			writingProfile: this.settings.writingProfile,
-		} as Partial<MyPluginSettings>);
+		} as Partial<BlogAssistantSettings>);
 		await this.saveApiKeyToEnv(this.settings.apiKey);
 	}
 
@@ -469,9 +468,9 @@ function writeEnvValue(envText: string, key: string, value: string): string {
 }
 
 class ApiKeyModal extends Modal {
-	plugin: MyPlugin;
+	plugin: BlogAssistantPlugin;
 
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: BlogAssistantPlugin) {
 		super(app);
 		this.plugin = plugin;
 	}
@@ -488,11 +487,13 @@ class ApiKeyModal extends Modal {
 		}
 
 		const saveButton = contentEl.createEl("button", { text: "Save" });
-		saveButton.addEventListener("click", async () => {
-			this.plugin.settings.apiKey = input.getValue().trim();
-			await this.plugin.saveSettings();
-			new Notice("API key saved");
-			this.close();
+		saveButton.addEventListener("click", () => {
+			void (async () => {
+				this.plugin.settings.apiKey = input.getValue().trim();
+				await this.plugin.saveSettings();
+				new Notice("API key saved");
+				this.close();
+			})();
 		});
 	}
 
