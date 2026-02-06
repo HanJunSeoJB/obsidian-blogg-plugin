@@ -4,7 +4,7 @@
 	"version": "1.0.1",
 	"minAppVersion": "0.15.0",
 	"description": "Parses meta actions in notes and generates styled Korean text or AI images with Gemini.",
-	"author": "hanjunseo",
+	"author": "HanJunSeoJB",
 	"authorUrl": "https://github.com/HanJunSeoJB",
 	"isDesktopOnly": false
 }
