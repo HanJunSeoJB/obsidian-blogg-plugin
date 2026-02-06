@@ -29,6 +29,7 @@ type GeminiResponse = {
 		content?: {
 			parts?: Array<{
 				text?: string;
+				inlineData?: { data?: string; mimeType?: string };
 				inline_data?: { data?: string; mime_type?: string };
 			}>;
 		};
@@ -108,12 +109,27 @@ async function callGeminiImageSearch(
 
 	const data = res.json as GeminiResponse;
 	const parts = data.candidates?.[0]?.content?.parts ?? [];
-	const inline = parts.find((p) => p.inline_data?.data);
-	const base64 = inline?.inline_data?.data?.trim() ?? "";
-	const mimeType = inline?.inline_data?.mime_type?.trim() ?? "image/png";
+	const inline = parts.find((p) => p.inlineData?.data || p.inline_data?.data);
+	const base64 =
+		inline?.inlineData?.data?.trim() ??
+		inline?.inline_data?.data?.trim() ??
+		"";
+	const mimeType =
+		inline?.inlineData?.mimeType?.trim() ??
+		inline?.inline_data?.mime_type?.trim() ??
+		"image/png";
 
 	if (!base64) {
-		throw new Error("No image data returned from Gemini.");
+		const firstPartText = parts[0]?.text?.trim() ?? "";
+		console.error("Gemini image response has no inline image payload", {
+			firstPartText,
+			parts,
+		});
+		const reason =
+			firstPartText.length > 0
+				? `No image data returned from Gemini. text=${firstPartText.slice(0, 180)}`
+				: "No image data returned from Gemini.";
+		throw new Error(reason);
 	}
 
 	const imagePath = await saveGeneratedImageToVault(
