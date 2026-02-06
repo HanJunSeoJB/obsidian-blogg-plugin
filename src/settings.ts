@@ -23,8 +23,6 @@ export class BlogAssistantSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 
 		containerEl.empty();
-		new Setting(containerEl).setName("Blog assistant").setHeading();
-
 		new Setting(containerEl)
 			.setName("기본 글쓰기 어투 프로필")
 			.setDesc(

@@ -1,6 +1,6 @@
 {
-	"id": "obsidian-blogMaking-plugin",
-	"name": "Obsidian Blog Assistant",
+	"id": "blog-assistant",
+	"name": "Blog Assistant",
 	"version": "1.0.1",
 	"minAppVersion": "0.15.0",
 	"description": "Parses meta actions in notes and generates styled Korean text or AI images with Gemini.",

@@ -1,4 +1,4 @@
-# Obsidian Blog Assistant
+# Blog Assistant
 
 Obsidian에서 메타 액션 문법을 파싱해 Gemini로 글/이미지를 생성해 노트에 반영하는 플러그인입니다.
 
